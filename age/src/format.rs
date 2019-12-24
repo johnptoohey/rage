@@ -4,6 +4,7 @@ use std::io::{self, Read, Write};
 
 use crate::primitives::HmacWriter;
 
+pub(crate) mod piv;
 pub(crate) mod plugin;
 pub(crate) mod scrypt;
 pub(crate) mod ssh_ed25519;
@@ -33,6 +34,7 @@ pub(crate) struct RecipientStanza<'a> {
 #[derive(Debug)]
 pub(crate) enum RecipientLine {
     X25519(x25519::RecipientLine),
+    Piv(piv::RecipientLine),
     Scrypt(scrypt::RecipientLine),
     #[cfg(feature = "unstable")]
     SshRsa(ssh_rsa::RecipientLine),
@@ -43,6 +45,12 @@ pub(crate) enum RecipientLine {
 impl From<x25519::RecipientLine> for RecipientLine {
     fn from(line: x25519::RecipientLine) -> Self {
         RecipientLine::X25519(line)
+    }
+}
+
+impl From<piv::RecipientLine> for RecipientLine {
+    fn from(line: piv::RecipientLine) -> Self {
+        RecipientLine::Piv(line)
     }
 }
 
@@ -176,6 +184,9 @@ mod read {
                 x25519::X25519_RECIPIENT_TAG => {
                     x25519::RecipientLine::from_stanza(stanza).map(RecipientLine::X25519)
                 }
+                piv::PIV_RECIPIENT_TAG => {
+                    piv::RecipientLine::from_stanza(stanza).map(RecipientLine::Piv)
+                }
                 scrypt::SCRYPT_RECIPIENT_TAG => {
                     scrypt::RecipientLine::from_stanza(stanza).map(RecipientLine::Scrypt)
                 }
@@ -246,6 +257,7 @@ mod write {
             let out = slice(RECIPIENT_TAG)(w)?;
             match r {
                 RecipientLine::X25519(r) => x25519::write::recipient_line(r)(out),
+                RecipientLine::Piv(r) => piv::write::recipient_line(r)(out),
                 RecipientLine::Scrypt(r) => scrypt::write::recipient_line(r)(out),
                 #[cfg(feature = "unstable")]
                 RecipientLine::SshRsa(r) => ssh_rsa::write::recipient_line(r)(out),

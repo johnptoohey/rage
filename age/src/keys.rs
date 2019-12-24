@@ -13,8 +13,9 @@ use zeroize::Zeroize;
 
 use crate::{
     error::Error,
-    format::{ssh_ed25519, x25519, RecipientLine},
+    format::{piv, ssh_ed25519, x25519, RecipientLine},
     openssh::{EncryptedOpenSshKey, SSH_ED25519_KEY_PREFIX},
+    primitives::p256,
     protocol::Callbacks,
 };
 
@@ -24,6 +25,7 @@ use crate::{format::ssh_rsa, openssh::SSH_RSA_KEY_PREFIX};
 // Use lower-case HRP to avoid https://github.com/rust-bitcoin/rust-bech32/issues/40
 const SECRET_KEY_PREFIX: &str = "age-secret-key-";
 const PUBLIC_KEY_PREFIX: &str = "age";
+const PIV_RECIPIENT_PREFIX: &str = "age1piv";
 
 fn parse_bech32(s: &str, expected_hrp: &str) -> Option<Result<[u8; 32], &'static str>> {
     bech32::decode(s).ok().map(|(hrp, data)| {
@@ -37,6 +39,10 @@ fn parse_bech32(s: &str, expected_hrp: &str) -> Option<Result<[u8; 32], &'static
             Err("incorrect HRP")
         }
     })
+}
+
+pub(crate) fn piv_to_str(pk: &p256::PublicKey) -> String {
+    bech32::encode(PIV_RECIPIENT_PREFIX, pk.as_bytes().to_base32()).expect("HRP is valid")
 }
 
 pub(crate) struct FileKey(pub(crate) Secret<[u8; 16]>);
@@ -335,6 +341,8 @@ impl Identity {
 pub enum RecipientKey {
     /// An X25519 recipient key.
     X25519(PublicKey),
+    /// A PIV recipient key.
+    Piv(p256::PublicKey),
     /// An ssh-rsa public key.
     #[cfg(feature = "unstable")]
     SshRsa(Vec<u8>, rsa::RSAPublicKey),
@@ -349,6 +357,12 @@ pub enum ParseRecipientKeyError {
     /// OpenSSH pubkey types that may occur in files we want to be able to parse, but that
     /// we do not directly support.
     Ignore,
+    /// The string contains an invalid Bech32 encoding.
+    InvalidEncoding,
+    /// The string is Bech32-encoded with an unsupported human-readable prefix.
+    InvalidHrp,
+    /// The length of the encoded recipient is invalid.
+    InvalidLength,
     /// The string is not a valid recipient key.
     Invalid(&'static str),
 }
@@ -358,12 +372,24 @@ impl std::str::FromStr for RecipientKey {
 
     /// Parses a recipient key from a string.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Try parsing as an age pubkey
-        if let Some(pk) = parse_bech32(s, PUBLIC_KEY_PREFIX) {
-            return pk
-                .map_err(ParseRecipientKeyError::Invalid)
-                .map(PublicKey::from)
-                .map(RecipientKey::X25519);
+        // Try parsing as an age pubkey or age PIV recipient
+        if let Ok((hrp, data)) = bech32::decode(s) {
+            return Vec::from_base32(&data)
+                .map_err(|_| ParseRecipientKeyError::InvalidEncoding)
+                .and_then(|bytes| {
+                    if hrp == PUBLIC_KEY_PREFIX.to_lowercase() {
+                        let tmp: Result<[u8; 32], _> = bytes[..]
+                            .try_into()
+                            .map_err(|_| ParseRecipientKeyError::InvalidLength);
+                        tmp.map(PublicKey::from).map(RecipientKey::X25519)
+                    } else if hrp == PIV_RECIPIENT_PREFIX.to_lowercase() {
+                        p256::PublicKey::from_bytes(&bytes)
+                            .ok_or(ParseRecipientKeyError::InvalidLength)
+                            .map(RecipientKey::Piv)
+                    } else {
+                        Err(ParseRecipientKeyError::InvalidHrp)
+                    }
+                });
         }
 
         // Try parsing as an OpenSSH pubkey
@@ -383,6 +409,7 @@ impl fmt::Display for RecipientKey {
                 "{}",
                 bech32::encode(PUBLIC_KEY_PREFIX, pk.as_bytes().to_base32()).expect("HRP is valid")
             ),
+            RecipientKey::Piv(pk) => write!(f, "{}", piv_to_str(pk)),
             #[cfg(feature = "unstable")]
             RecipientKey::SshRsa(ssh_key, _) => {
                 write!(f, "{} {}", SSH_RSA_KEY_PREFIX, base64::encode(&ssh_key))
@@ -398,6 +425,7 @@ impl RecipientKey {
     pub(crate) fn wrap_file_key(&self, file_key: &FileKey) -> RecipientLine {
         match self {
             RecipientKey::X25519(pk) => x25519::RecipientLine::wrap_file_key(file_key, pk).into(),
+            RecipientKey::Piv(pk) => piv::RecipientLine::wrap_file_key(file_key, pk).into(),
             #[cfg(feature = "unstable")]
             RecipientKey::SshRsa(ssh_key, pk) => {
                 ssh_rsa::RecipientLine::wrap_file_key(file_key, ssh_key, pk).into()

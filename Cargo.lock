@@ -60,15 +60,18 @@ dependencies = [
  "curve25519-dalek 2.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "dialoguer 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "dirs 2.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "elliptic-curve 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "hkdf 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "hmac 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "nom 5.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "num-traits 0.2.11 (registry+https://github.com/rust-lang/crates.io-index)",
+ "p256 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "pinentry 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "quickcheck 0.9.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "quickcheck_macros 0.9.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "radix64 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.7.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ring 0.16.10 (registry+https://github.com/rust-lang/crates.io-index)",
  "rsa 0.2.0 (git+https://github.com/str4d/RSA?branch=oaep)",
  "scrypt 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "secrecy 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -561,6 +564,17 @@ version = "1.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
+name = "elliptic-curve"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "generic-array 0.12.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "getrandom 0.1.14 (registry+https://github.com/rust-lang/crates.io-index)",
+ "subtle 2.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zeroize 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "encode_unicode"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -923,6 +937,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 name = "opaque-debug"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "p256"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "elliptic-curve 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "subtle 2.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
+]
 
 [[package]]
 name = "pbkdf2"
@@ -1775,6 +1798,7 @@ dependencies = [
 "checksum dirs 2.0.2 (registry+https://github.com/rust-lang/crates.io-index)" = "13aea89a5c93364a98e9b37b2fa237effbb694d5cfe01c5b70941f7eb087d5e3"
 "checksum dirs-sys 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)" = "afa0b23de8fd801745c471deffa6e12d248f962c9fd4b4c33787b055599bde7b"
 "checksum either 1.5.3 (registry+https://github.com/rust-lang/crates.io-index)" = "bb1f6b1ce1c140482ea30ddd3335fc0024ac7ee112895426e0a629a6c20adfe3"
+"checksum elliptic-curve 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "01f69be7d1feb7a7a04f158aaf32c7deaa7604e9bd58145525e536438c4e5096"
 "checksum encode_unicode 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)" = "a357d28ed41a50f9c765dbfe56cbc04a64e53e5fc58ba79fbc34c10ef3df831f"
 "checksum env_logger 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)" = "44533bbbb3bb3c1fa17d9f2e4e38bbbaf8396ba82193c4cb1b6445d711445d36"
 "checksum failure 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)" = "f8273f13c977665c5db7eb2b99ae520952fe5ac831ae4cd09d80c4c7042b5ed9"
@@ -1817,6 +1841,7 @@ dependencies = [
 "checksum num_cpus 1.12.0 (registry+https://github.com/rust-lang/crates.io-index)" = "46203554f085ff89c235cd12f7075f3233af9b11ed7c9e16dfe2560d03313ce6"
 "checksum oorandom 11.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "ebcec7c9c2a95cacc7cd0ecb89d8a8454eca13906f6deb55258ffff0adeb9405"
 "checksum opaque-debug 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)" = "2839e79665f131bdb5782e51f2c6c9599c133c6098982a54c794358bf432529c"
+"checksum p256 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "812a058a5afc96a52a8ab6e250325d025254ff030ff737dc5b62576e4e604c42"
 "checksum pbkdf2 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "006c038a43a45995a9670da19e67600114740e8511d4333bf97a56e66a7542d9"
 "checksum pinentry 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "36bf2b9e565399e61073d044c01f57e4890f59b0762b3649c5f94e83439141cf"
 "checksum pkg-config 0.3.17 (registry+https://github.com/rust-lang/crates.io-index)" = "05da548ad6865900e60eaba7f589cc0783590a92e940c26953ff81ddbab2d677"
