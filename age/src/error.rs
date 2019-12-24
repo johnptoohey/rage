@@ -19,10 +19,15 @@ pub enum Error {
     },
     /// The MAC in the message header was invalid.
     InvalidMac,
+    /// A recipient was invalid.
+    InvalidRecipient,
     /// An I/O error occurred during decryption.
     Io(io::Error),
     /// Failed to decrypt an encrypted key.
     KeyDecryptionFailed,
+    /// A YubiKey stub did not match the YubiKey. Either the stub is malformed, or the key
+    /// in the slot has been altered.
+    KeyMismatch,
     /// The provided message requires keys to decrypt.
     MessageRequiresKeys,
     /// The provided message requires a passphrase to decrypt.
@@ -31,6 +36,9 @@ pub enum Error {
     NoMatchingKeys,
     /// An unknown age format, probably from a newer version.
     UnknownFormat,
+    /// YubiKey error.
+    #[cfg(feature = "yubikey")]
+    YubiKey(yubikey_piv::error::Error),
 }
 
 impl fmt::Display for Error {
@@ -47,8 +55,10 @@ impl fmt::Display for Error {
                 )
             }
             Error::InvalidMac => write!(f, "Header MAC is invalid"),
+            Error::InvalidRecipient => write!(f, "Recipient is invalid"),
             Error::Io(e) => e.fmt(f),
             Error::KeyDecryptionFailed => write!(f, "Failed to decrypt an encrypted key"),
+            Error::KeyMismatch => write!(f, "A YubiKey stub did not match the YubiKey"),
             Error::MessageRequiresKeys => write!(f, "This message requires keys to decrypt"),
             Error::MessageRequiresPassphrase => {
                 write!(f, "This message requires a passphrase to decrypt")
@@ -58,6 +68,8 @@ impl fmt::Display for Error {
                 writeln!(f, "Unknown age format.")?;
                 write!(f, "Have you tried upgrading to the latest version?")
             }
+            #[cfg(feature = "yubikey")]
+            Error::YubiKey(e) => e.fmt(f),
         }
     }
 }
@@ -87,10 +99,19 @@ impl From<rsa::errors::Error> for Error {
     }
 }
 
+#[cfg(feature = "yubikey")]
+impl From<yubikey_piv::error::Error> for Error {
+    fn from(e: yubikey_piv::error::Error) -> Self {
+        Error::YubiKey(e)
+    }
+}
+
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Error::Io(inner) => Some(inner),
+            #[cfg(feature = "yubikey")]
+            Error::YubiKey(inner) => Some(inner),
             _ => None,
         }
     }

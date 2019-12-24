@@ -22,9 +22,13 @@ use crate::{
 #[cfg(feature = "unstable")]
 use crate::{format::ssh_rsa, openssh::SSH_RSA_KEY_PREFIX};
 
+#[cfg(feature = "yubikey")]
+use crate::yubikey;
+
 // Use lower-case HRP to avoid https://github.com/rust-bitcoin/rust-bech32/issues/40
 const SECRET_KEY_PREFIX: &str = "age-secret-key-";
 const PUBLIC_KEY_PREFIX: &str = "age";
+pub(crate) const YUBIKEY_STUB_PREFIX: &str = "age-yubikey-stub-";
 const PIV_RECIPIENT_PREFIX: &str = "age1piv";
 
 fn parse_bech32(s: &str, expected_hrp: &str) -> Option<Result<[u8; 32], &'static str>> {
@@ -233,6 +237,9 @@ pub enum IdentityKey {
     Unencrypted(SecretKey),
     /// An encrypted key.
     Encrypted(EncryptedKey),
+    /// A key stored on a YubiKey.
+    #[cfg(feature = "yubikey")]
+    YubiKey(yubikey::Stub),
     /// An unsupported key.
     Unsupported(UnsupportedKey),
 }
@@ -257,6 +264,16 @@ impl From<EncryptedKey> for Identity {
         Identity {
             filename: None,
             key: IdentityKey::Encrypted(key),
+        }
+    }
+}
+
+#[cfg(feature = "yubikey")]
+impl From<yubikey::Stub> for Identity {
+    fn from(stub: yubikey::Stub) -> Self {
+        Identity {
+            filename: None,
+            key: IdentityKey::YubiKey(stub),
         }
     }
 }
@@ -328,10 +345,16 @@ impl Identity {
         line: &RecipientLine,
         callbacks: &dyn Callbacks,
     ) -> Option<Result<FileKey, Error>> {
-        match &self.key {
-            IdentityKey::Unencrypted(key) => key.unwrap_file_key(line),
-            IdentityKey::Encrypted(key) => key.unwrap_file_key(line, callbacks, self.filename()),
-            IdentityKey::Unsupported(_) => None,
+        match (&self.key, line) {
+            (IdentityKey::Unencrypted(key), _) => key.unwrap_file_key(line),
+            (IdentityKey::Encrypted(key), _) => {
+                key.unwrap_file_key(line, callbacks, self.filename())
+            }
+            #[cfg(feature = "yubikey")]
+            (IdentityKey::YubiKey(stub), RecipientLine::Piv(r)) => {
+                stub.unwrap_file_key(r, callbacks)
+            }
+            _ => None,
         }
     }
 }
@@ -460,6 +483,28 @@ mod read {
         )(input)
     }
 
+    fn age_yubikey_stub(input: &str) -> IResult<&str, Identity> {
+        map_opt(take(39u32), |buf| {
+            bech32::decode(buf).ok().and_then(|(hrp, data)| {
+                Vec::from_base32(&data).ok().and_then(|_bytes| {
+                    if hrp == YUBIKEY_STUB_PREFIX.to_lowercase() {
+                        #[cfg(not(feature = "yubikey"))]
+                        {
+                            eprintln!("Error: rage-keygen was not built with YubiKey support.");
+                            eprintln!("Use '--features yubikey' when building.");
+                            None
+                        }
+
+                        #[cfg(feature = "yubikey")]
+                        yubikey::Stub::from_bytes(&_bytes).map(Identity::from)
+                    } else {
+                        None
+                    }
+                })
+            })
+        })(input)
+    }
+
     fn age_secret_keys(mut input: &str) -> IResult<&str, Vec<Identity>> {
         let mut keys = vec![];
         while !input.is_empty() {
@@ -474,7 +519,9 @@ mod read {
             let i = if i.starts_with('\n') {
                 i
             } else {
-                let (i, sk) = age_secret_key(i)?;
+                // Try the shorter parser first.
+                let (i, sk) = alt((age_yubikey_stub, age_secret_key))(i)?;
+
                 keys.push(sk);
                 i
             };

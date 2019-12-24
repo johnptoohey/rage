@@ -14,6 +14,9 @@ use crate::{
     util::read::base64_arg,
 };
 
+#[cfg(feature = "yubikey")]
+pub mod yubikey;
+
 pub(super) const PIV_RECIPIENT_TAG: &str = "piv";
 const PIV_RECIPIENT_KEY_LABEL: &[u8] = b"age-encryption.org/v1/piv";
 

@@ -67,6 +67,10 @@ radix64 = "0.6"
 secrecy = "0.6"
 zeroize = "1"
 
+# YubiKey dependencies
+subtle = { version = "2.2.2", optional = true }
+yubikey-piv = { version = "0.0.3", features = ["untested"], optional = true }
+
 # Common CLI dependencies
 console = { version = "0.9", optional = true }
 dialoguer = { version = "0.5", optional = true }
@@ -83,6 +87,7 @@ quickcheck_macros = "0.9"
 default = []
 cli-common = ["console", "dialoguer", "dirs", "pinentry"]
 unstable = ["num-traits", "rsa"]
+yubikey = ["subtle", "yubikey-piv"]
 
 [[bench]]
 name = "throughput"

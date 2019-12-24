@@ -117,6 +117,9 @@ pub use protocol::{Callbacks, Decryptor, Encryptor};
 #[cfg(feature = "cli-common")]
 pub mod cli_common;
 
+#[cfg(feature = "yubikey")]
+pub use format::piv::yubikey;
+
 /// Helper for fuzzing the Header parser and serializer.
 #[cfg(fuzzing)]
 pub fn fuzz_header(data: &[u8]) {

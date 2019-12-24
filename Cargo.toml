@@ -3,3 +3,6 @@ members = [
     "age",
     "rage",
 ]
+
+[patch.crates-io]
+yubikey-piv = { git = "https://github.com/iqlusioninc/yubikey-piv.rs.git", branch = "develop" }
