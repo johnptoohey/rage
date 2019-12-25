@@ -136,6 +136,12 @@ fn rage_keygen_page() {
                 .long("--help")
                 .help("Display help text and exit"),
         )
+        .flag(
+            Flag::new()
+                .short("-y")
+                .long("--yubikey")
+                .help("Set up a YubiKey (requires 'yubikey' feature)"),
+        )
         .option(
             Opt::new("output")
                 .short("-o")
