@@ -10,6 +10,7 @@ use crate::{
     error::Error,
     format::{oil_the_joint, scrypt, Header, HeaderV1, RecipientStanza},
     keys::{FileKey, RecipientKey},
+    plugin,
     primitives::{
         armor::{ArmoredReader, ArmoredWriter},
         stream::{Stream, StreamWriter},
@@ -59,12 +60,35 @@ enum EncryptorType {
 impl EncryptorType {
     fn wrap_file_key(self, file_key: &FileKey) -> Vec<RecipientStanza> {
         match self {
-            EncryptorType::Keys(recipients) => recipients
-                .iter()
-                .map(|key| key.wrap_file_key(file_key))
-                // Keep the joint well oiled!
-                .chain(iter::once(oil_the_joint()))
-                .collect(),
+            EncryptorType::Keys(recipients) => {
+                // Collect the names of the required plugins.
+                let mut plugin_names: Vec<_> = recipients
+                    .iter()
+                    .filter_map(|key| match key {
+                        RecipientKey::Plugin { name, .. } => Some(name),
+                        _ => None,
+                    })
+                    .collect();
+                plugin_names.sort();
+                plugin_names.dedup();
+
+                // Connect to the required plugins.
+                let mut plugins = plugin_names
+                    .into_iter()
+                    .map(|name| {
+                        plugin::KeyWrapper::for_plugin(name).map(|conn| (name.clone(), conn))
+                    })
+                    .collect::<Result<_, _>>()
+                    .expect("TODO: errors");
+
+                // Now we can go ahead and wrap the file key to each recipient.
+                recipients
+                    .iter()
+                    .map(|key| key.wrap_file_key(file_key, &mut plugins))
+                    // Keep the joint well oiled!
+                    .chain(iter::once(oil_the_joint()))
+                    .collect()
+            }
             EncryptorType::Passphrase(passphrase) => {
                 vec![scrypt::RecipientStanza::wrap_file_key(file_key, &passphrase).into()]
             }

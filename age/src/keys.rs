@@ -4,6 +4,7 @@ use bech32::{FromBase32, ToBase32};
 use curve25519_dalek::edwards::EdwardsPoint;
 use rand::{rngs::OsRng, RngCore};
 use secrecy::{ExposeSecret, Secret, SecretString};
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fmt;
 use std::fs::File;
@@ -15,6 +16,7 @@ use crate::{
     error::Error,
     format::{ssh_ed25519, x25519, RecipientStanza},
     openssh::{EncryptedOpenSshKey, SSH_ED25519_KEY_PREFIX},
+    plugin::KeyWrapper,
     protocol::Callbacks,
 };
 
@@ -24,6 +26,9 @@ use crate::{format::ssh_rsa, openssh::SSH_RSA_KEY_PREFIX};
 // Use lower-case HRP to avoid https://github.com/rust-bitcoin/rust-bech32/issues/40
 const SECRET_KEY_PREFIX: &str = "age-secret-key-";
 const PUBLIC_KEY_PREFIX: &str = "age";
+
+// Plugin HRPs are age1[name]
+const PLUGIN_RECIPIENT_PREFIX: &str = "age1";
 
 fn parse_bech32(s: &str, expected_hrp: &str) -> Option<Result<[u8; 32], &'static str>> {
     bech32::decode(s).ok().map(|(hrp, data)| {
@@ -343,6 +348,13 @@ pub enum RecipientKey {
     SshRsa(Vec<u8>, rsa::RSAPublicKey),
     /// An ssh-ed25519 public key.
     SshEd25519(Vec<u8>, EdwardsPoint),
+    /// A plugin recipient.
+    Plugin {
+        /// The plugin name, extracted from `recipient`.
+        name: String,
+        /// The recipient.
+        recipient: String,
+    },
 }
 
 /// Error conditions when parsing a recipient key.
@@ -352,6 +364,12 @@ pub enum ParseRecipientKeyError {
     /// OpenSSH pubkey types that may occur in files we want to be able to parse, but that
     /// we do not directly support.
     Ignore,
+    /// The string contains an invalid Bech32 encoding.
+    InvalidEncoding,
+    /// The string is Bech32-encoded with an unsupported human-readable prefix.
+    InvalidHrp,
+    /// The length of the encoded recipient is invalid.
+    InvalidLength,
     /// The string is not a valid recipient key.
     Invalid(&'static str),
 }
@@ -361,12 +379,25 @@ impl std::str::FromStr for RecipientKey {
 
     /// Parses a recipient key from a string.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Try parsing as an age pubkey
-        if let Some(pk) = parse_bech32(s, PUBLIC_KEY_PREFIX) {
-            return pk
-                .map_err(ParseRecipientKeyError::Invalid)
-                .map(PublicKey::from)
-                .map(RecipientKey::X25519);
+        // Try parsing as an age pubkey or age plugin recipient
+        if let Ok((hrp, data)) = bech32::decode(s) {
+            return Vec::from_base32(&data)
+                .map_err(|_| ParseRecipientKeyError::InvalidEncoding)
+                .and_then(|bytes| {
+                    if hrp == PUBLIC_KEY_PREFIX {
+                        let tmp: Result<[u8; 32], _> = bytes[..]
+                            .try_into()
+                            .map_err(|_| ParseRecipientKeyError::InvalidLength);
+                        tmp.map(PublicKey::from).map(RecipientKey::X25519)
+                    } else if hrp.starts_with(PLUGIN_RECIPIENT_PREFIX) {
+                        Ok(RecipientKey::Plugin {
+                            name: hrp.split_at(PLUGIN_RECIPIENT_PREFIX.len()).1.to_owned(),
+                            recipient: s.to_owned(),
+                        })
+                    } else {
+                        Err(ParseRecipientKeyError::InvalidHrp)
+                    }
+                });
         }
 
         // Try parsing as an OpenSSH pubkey
@@ -393,12 +424,17 @@ impl fmt::Display for RecipientKey {
             RecipientKey::SshEd25519(ssh_key, _) => {
                 write!(f, "{} {}", SSH_ED25519_KEY_PREFIX, base64::encode(&ssh_key))
             }
+            RecipientKey::Plugin { recipient, .. } => write!(f, "{}", recipient),
         }
     }
 }
 
 impl RecipientKey {
-    pub(crate) fn wrap_file_key(&self, file_key: &FileKey) -> RecipientStanza {
+    pub(crate) fn wrap_file_key(
+        &self,
+        file_key: &FileKey,
+        plugins: &mut HashMap<String, KeyWrapper>,
+    ) -> RecipientStanza {
         match self {
             RecipientKey::X25519(pk) => x25519::RecipientStanza::wrap_file_key(file_key, pk).into(),
             #[cfg(feature = "unstable")]
@@ -408,6 +444,12 @@ impl RecipientKey {
             RecipientKey::SshEd25519(ssh_key, ed25519_pk) => {
                 ssh_ed25519::RecipientStanza::wrap_file_key(file_key, ssh_key, ed25519_pk).into()
             }
+            RecipientKey::Plugin { name, recipient } => plugins
+                .get_mut(name)
+                .expect("We only call wrap_file_key with a complete plugins map")
+                .wrap_file_key(file_key, recipient)
+                .map(RecipientStanza::from)
+                .expect("TODO: errors"),
         }
     }
 }
@@ -482,6 +524,7 @@ mod read {
 #[cfg(test)]
 pub(crate) mod tests {
     use secrecy::{ExposeSecret, Secret};
+    use std::collections::HashMap;
     use std::io::BufReader;
 
     use super::{FileKey, Identity, IdentityKey, RecipientKey};
@@ -659,7 +702,7 @@ AAAEADBJvjZT8X6JRJI8xVq/1aU8nMVgOtVnmdwqWwrSlXG3sKLqeplhpW+uObz5dvMgjz
 
         let file_key = FileKey(Secret::new([12; 16]));
 
-        let wrapped = pk.wrap_file_key(&file_key);
+        let wrapped = pk.wrap_file_key(&file_key, &mut HashMap::default());
         let unwrapped = sk.unwrap_file_key(&wrapped);
         assert_eq!(
             unwrapped.unwrap().unwrap().0.expose_secret(),

@@ -8,7 +8,7 @@ pub(crate) struct RecipientStanza {
 }
 
 impl RecipientStanza {
-    pub(super) fn from_stanza(stanza: AgeStanza<'_>) -> Self {
+    pub(crate) fn from_stanza(stanza: AgeStanza<'_>) -> Self {
         RecipientStanza {
             tag: stanza.tag.to_string(),
             args: stanza.args.into_iter().map(|s| s.to_string()).collect(),
