@@ -162,3 +162,64 @@
 //!   configuration support; instead of only needing one per-user folder, we would also
 //!   need to handle system configuration folders across various platforms, as well as be
 //!   safe across OS upgrades.
+
+use std::fmt;
+use std::io;
+
+mod connection;
+mod format;
+
+// Plugin HRPs are age1[name] and AGE-PLUGIN-[NAME]-
+const PLUGIN_RECIPIENT_PREFIX: &str = "age1";
+
+#[derive(Debug)]
+pub struct RecipientStanza {
+    pub tag: String,
+    pub args: Vec<String>,
+    pub body: Vec<u8>,
+}
+
+pub trait AgeError: fmt::Display {
+    fn code(&self) -> u16;
+}
+
+/// The interface that age implementations will use to interact with an age plugin.
+pub trait AgePlugin {
+    type Error: AgeError;
+
+    /// Wraps `file_key` in an age recipient stanza that can be unwrapped by `recipient`.
+    ///
+    /// `plugin_name` identifies the plugin that generated this recipient. In most cases,
+    /// it will be identical to the name of the plugin implementing this trait. However,
+    /// age implementations look up plugins by their binary name, and if a plugin is
+    /// renamed or aliased in the user's OS environment, it is possible for a plugin to
+    /// receive identities that it does not support. Implementations must check
+    /// `plugin_name` before using `recipient`.
+    fn wrap_file_key(
+        &mut self,
+        plugin_name: &str,
+        recipient: &[u8],
+        file_key: &[u8],
+    ) -> Result<RecipientStanza, Self::Error>;
+}
+
+/// Runs the given plugin, interacting with an age implementation over standard I/O.
+pub fn run_plugin<P: AgePlugin>(mut plugin: P) -> io::Result<()> {
+    use crate::{connection::Connection, format::Command};
+
+    let mut conn = Connection::new();
+
+    loop {
+        // TODO: Handle "UnexpectedEof"
+        match conn.read_command()? {
+            Command::WrapFileKey {
+                plugin_name,
+                recipient,
+                file_key,
+            } => match plugin.wrap_file_key(&plugin_name, &recipient, &file_key) {
+                Ok(r) => conn.recipient_stanza(r),
+                Err(e) => conn.plugin_error(e),
+            }?,
+        }
+    }
+}
