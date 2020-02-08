@@ -37,6 +37,9 @@ fn v1_payload_key(
 
 /// Callbacks that might be triggered during decryption.
 pub trait Callbacks {
+    /// Shows a prompt.
+    fn prompt(&self, message: &str);
+
     /// Requests a passphrase to decrypt a key.
     fn request_passphrase(&self, description: &str) -> Option<SecretString>;
 }
@@ -44,6 +47,8 @@ pub trait Callbacks {
 struct NoCallbacks;
 
 impl Callbacks for NoCallbacks {
+    fn prompt(&self, _message: &str) {}
+
     fn request_passphrase(&self, _description: &str) -> Option<SecretString> {
         None
     }

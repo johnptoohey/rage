@@ -27,22 +27,9 @@ use crate::{format::ssh_rsa, openssh::SSH_RSA_KEY_PREFIX};
 const SECRET_KEY_PREFIX: &str = "age-secret-key-";
 const PUBLIC_KEY_PREFIX: &str = "age";
 
-// Plugin HRPs are age1[name]
+// Plugin HRPs are age1[name] and AGE-PLUGIN-[NAME]-
 const PLUGIN_RECIPIENT_PREFIX: &str = "age1";
-
-fn parse_bech32(s: &str, expected_hrp: &str) -> Option<Result<[u8; 32], &'static str>> {
-    bech32::decode(s).ok().map(|(hrp, data)| {
-        if hrp == expected_hrp.to_lowercase() {
-            if let Ok(bytes) = Vec::from_base32(&data) {
-                bytes[..].try_into().map_err(|_| "incorrect pubkey length")
-            } else {
-                Err("incorrect Bech32 data padding")
-            }
-        } else {
-            Err("incorrect HRP")
-        }
-    })
-}
+const PLUGIN_SECRET_PREFIX: &str = "age-plugin-";
 
 pub(crate) struct FileKey(pub(crate) Secret<[u8; 16]>);
 
@@ -237,6 +224,13 @@ pub enum IdentityKey {
     Encrypted(EncryptedKey),
     /// An unsupported key.
     Unsupported(UnsupportedKey),
+    /// A plugin identity. This might represent a key, or a handle to a key.
+    Plugin {
+        /// The plugin name, extracted from `identity`.
+        name: String,
+        /// The identity.
+        identity: String,
+    },
 }
 
 /// An identity that has been parsed from some input.
@@ -333,7 +327,7 @@ impl Identity {
         match &self.key {
             IdentityKey::Unencrypted(key) => key.unwrap_file_key(stanza),
             IdentityKey::Encrypted(key) => key.unwrap_file_key(stanza, callbacks, self.filename()),
-            IdentityKey::Unsupported(_) => None,
+            _ => None,
         }
     }
 }
@@ -457,9 +451,9 @@ impl RecipientKey {
 mod read {
     use nom::{
         branch::alt,
-        bytes::streaming::{tag, take},
+        bytes::{complete::take_till1, streaming::tag},
         character::complete::{line_ending, not_line_ending},
-        combinator::{all_consuming, iterator, map, map_opt, map_parser, map_res, rest},
+        combinator::{all_consuming, iterator, map, map_parser, map_res, rest},
         sequence::{terminated, tuple},
         IResult,
     };
@@ -468,14 +462,36 @@ mod read {
     use crate::openssh::ssh_secret_keys;
 
     fn age_secret_key(input: &str) -> IResult<&str, Identity> {
-        map_res(
-            map_opt(take(74u32), |buf| parse_bech32(buf, SECRET_KEY_PREFIX)),
-            |pk| {
-                pk.map(StaticSecret::from)
-                    .map(SecretKey::X25519)
-                    .map(Identity::from)
-            },
-        )(input)
+        map_res(take_till1(|c| c == '\n'), |buf| {
+            bech32::decode(buf)
+                .map_err(|_| ParseRecipientKeyError::InvalidEncoding)
+                .and_then(|(hrp, data)| {
+                    Vec::from_base32(&data)
+                        .map(|bytes| (hrp, bytes))
+                        .map_err(|_| ParseRecipientKeyError::InvalidEncoding)
+                })
+                .and_then(|(hrp, bytes)| {
+                    if hrp == SECRET_KEY_PREFIX {
+                        let tmp: Result<[u8; 32], _> = bytes[..]
+                            .try_into()
+                            .map_err(|_| ParseRecipientKeyError::InvalidLength);
+                        tmp.map(StaticSecret::from)
+                            .map(SecretKey::X25519)
+                            .map(Identity::from)
+                    } else if hrp.starts_with(PLUGIN_SECRET_PREFIX) && hrp.ends_with('-') {
+                        let fragment = hrp.split_at(PLUGIN_SECRET_PREFIX.len()).1;
+                        Ok(Identity {
+                            filename: None,
+                            key: IdentityKey::Plugin {
+                                name: fragment.split_at(fragment.len() - 1).0.to_owned(),
+                                identity: buf.to_owned(),
+                            },
+                        })
+                    } else {
+                        Err(ParseRecipientKeyError::InvalidHrp)
+                    }
+                })
+        })(input)
     }
 
     fn age_secret_keys_line(input: &str) -> IResult<&str, Option<Identity>> {

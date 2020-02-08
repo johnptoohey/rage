@@ -1,6 +1,6 @@
 //! Common helpers for CLI binaries.
 
-use pinentry::PassphraseInput;
+use pinentry::{MessageDialog, PassphraseInput};
 use rand::{
     distributions::{Distribution, Uniform},
     rngs::OsRng,
@@ -140,6 +140,15 @@ pub fn read_secret(
 pub struct UiCallbacks;
 
 impl Callbacks for UiCallbacks {
+    fn prompt(&self, message: &str) {
+        if let Some(mut dialog) = MessageDialog::with_default_binary() {
+            // pinentry binary is available!
+            dialog.show_message(message);
+        } else {
+            eprintln!("{}", message);
+        }
+    }
+
     fn request_passphrase(&self, description: &str) -> Option<SecretString> {
         read_secret(description, "Passphrase", None).ok()
     }

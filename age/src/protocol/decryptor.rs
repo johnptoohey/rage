@@ -1,13 +1,15 @@
 //! Decryptors for age.
 
 use secrecy::SecretString;
+use std::collections::HashMap;
 use std::io::Read;
 
 use super::{v1_payload_key, Callbacks, NoCallbacks};
 use crate::{
     error::Error,
     format::{Header, RecipientStanza},
-    keys::{FileKey, Identity},
+    keys::{FileKey, Identity, IdentityKey},
+    plugin,
     primitives::{
         armor::ArmoredReader,
         stream::{Stream, StreamReader},
@@ -69,11 +71,34 @@ impl<R: Read> RecipientsDecryptor<R> {
         identities: &[Identity],
         callbacks: &dyn Callbacks,
     ) -> Result<StreamReader<R>, Error> {
+        // Partition identities by plugin name
+        let mut plugin_identities: HashMap<String, Vec<String>> = HashMap::new();
+        let identities: Vec<&Identity> = identities
+            .into_iter()
+            .filter(|i| match i.key() {
+                IdentityKey::Plugin { name, identity } => {
+                    plugin_identities
+                        .entry(name.clone())
+                        .or_default()
+                        .push(identity.clone());
+                    false
+                }
+                _ => true,
+            })
+            .collect();
+
         self.0
-            .obtain_payload_key(|r| {
-                identities
+            .obtain_payload_key(|r| match r {
+                RecipientStanza::Plugin(r) => {
+                    plugin_identities.get(&r.tag).and_then(|identities| {
+                        plugin::KeyUnwrapper::for_plugin(&r.tag, identities)
+                            .and_then(|mut conn| conn.unwrap_file_key(r, callbacks))
+                            .transpose()
+                    })
+                }
+                _ => identities
                     .iter()
-                    .find_map(|key| key.unwrap_file_key(r, callbacks))
+                    .find_map(|key| key.unwrap_file_key(r, callbacks)),
             })
             .map(|payload_key| Stream::decrypt(&payload_key, self.0.input))
     }
