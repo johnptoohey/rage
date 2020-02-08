@@ -163,6 +163,7 @@
 //!   need to handle system configuration folders across various platforms, as well as be
 //!   safe across OS upgrades.
 
+use secrecy::SecretString;
 use std::fmt;
 use std::io;
 
@@ -171,6 +172,7 @@ mod format;
 
 // Plugin HRPs are age1[name] and AGE-PLUGIN-[NAME]-
 const PLUGIN_RECIPIENT_PREFIX: &str = "age1";
+const PLUGIN_SECRET_PREFIX: &str = "age-plugin-";
 
 #[derive(Debug)]
 pub struct RecipientStanza {
@@ -183,9 +185,46 @@ pub trait AgeError: fmt::Display {
     fn code(&self) -> u16;
 }
 
+/// The interface that age plugins can use to interact with an age implementation.
+pub trait AgeCallbacks {
+    /// Shows a message to the user.
+    ///
+    /// This can be used to prompt the user to take some physical action, such as
+    /// inserting a hardware key.
+    fn prompt(&mut self, message: &str) -> io::Result<()>;
+
+    /// Requests a secret value from the user, such as a passphrase.
+    ///
+    /// `message` will be displayed to the user, providing context for the request.
+    fn request_secret(&mut self, message: &str) -> io::Result<SecretString>;
+}
+
 /// The interface that age implementations will use to interact with an age plugin.
 pub trait AgePlugin {
     type Error: AgeError;
+
+    /// Stores an identity that the user would like to use for decrypting age files.
+    ///
+    /// `plugin_name` identifies the plugin that generated this identity. In most cases,
+    /// it will be identical to the name of the plugin implementing this trait. However,
+    /// age implementations look up plugins by their binary name, and if a plugin is
+    /// renamed or aliased in the user's OS environment, it is possible for a plugin to
+    /// receive identities that it does not support. Implementations must check
+    /// `plugin_name` before using `identity`.
+    fn add_identity(&mut self, plugin_name: &str, identity: &[u8]) -> Result<(), Self::Error>;
+
+    /// Attempts to unwrap the file key contained within the given age recipient stanza,
+    /// using identities previously stored via [`add_identity`].
+    ///
+    /// The `callbacks` object can be used to interact with the user if necessary (for
+    /// example, displaying a prompt to take some action, or requesting a passphrase).
+    ///
+    /// [`add_identity`]: AgePlugin::add_identity
+    fn unwrap_file_key(
+        &mut self,
+        recipient_stanza: RecipientStanza,
+        callbacks: impl AgeCallbacks,
+    ) -> Result<Vec<u8>, Self::Error>;
 
     /// Wraps `file_key` in an age recipient stanza that can be unwrapped by `recipient`.
     ///
@@ -205,13 +244,29 @@ pub trait AgePlugin {
 
 /// Runs the given plugin, interacting with an age implementation over standard I/O.
 pub fn run_plugin<P: AgePlugin>(mut plugin: P) -> io::Result<()> {
-    use crate::{connection::Connection, format::Command};
+    use crate::{
+        connection::{Callbacks, Connection},
+        format::Command,
+    };
 
     let mut conn = Connection::new();
 
     loop {
         // TODO: Handle "UnexpectedEof"
         match conn.read_command()? {
+            Command::AddIdentity {
+                plugin_name,
+                identity,
+            } => match plugin.add_identity(&plugin_name, &identity) {
+                Ok(_) => conn.identity_added(),
+                Err(e) => conn.plugin_error(e),
+            }?,
+            Command::UnwrapFileKey(r) => {
+                match plugin.unwrap_file_key(r, Callbacks::new(&mut conn)) {
+                    Ok(file_key) => conn.file_key(file_key)?,
+                    Err(e) => conn.plugin_error(e)?,
+                }
+            }
             Command::WrapFileKey {
                 plugin_name,
                 recipient,
@@ -220,6 +275,11 @@ pub fn run_plugin<P: AgePlugin>(mut plugin: P) -> io::Result<()> {
                 Ok(r) => conn.recipient_stanza(r),
                 Err(e) => conn.plugin_error(e),
             }?,
+            _ => conn.invalid_command(&[
+                format::CMD_ADD_IDENTITY,
+                format::CMD_WRAP_FILE_KEY,
+                format::CMD_UNWRAP_FILE_KEY,
+            ])?,
         }
     }
 }

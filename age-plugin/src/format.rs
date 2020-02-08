@@ -1,14 +1,26 @@
+use secrecy::SecretString;
 use std::io::{self, BufRead};
 
+use crate::RecipientStanza;
+
+pub(crate) const CMD_ADD_IDENTITY: &str = "add-identity";
+pub(crate) const CMD_SECRET: &str = "secret";
+pub(crate) const CMD_UNWRAP_FILE_KEY: &str = "unwrap-file-key";
 pub(crate) const CMD_WRAP_FILE_KEY: &str = "wrap-file-key";
 
 #[derive(Debug)]
 pub(crate) enum Command {
+    AddIdentity {
+        plugin_name: String,
+        identity: Vec<u8>,
+    },
     WrapFileKey {
         plugin_name: String,
         recipient: Vec<u8>,
         file_key: Vec<u8>,
     },
+    UnwrapFileKey(RecipientStanza),
+    Secret(SecretString),
 }
 
 impl Command {
@@ -46,14 +58,31 @@ mod read {
         sequence::{pair, terminated},
         IResult,
     };
+    use secrecy::SecretString;
 
-    use super::{Command, CMD_WRAP_FILE_KEY};
-    use crate::PLUGIN_RECIPIENT_PREFIX;
+    use super::{Command, CMD_ADD_IDENTITY, CMD_SECRET, CMD_UNWRAP_FILE_KEY, CMD_WRAP_FILE_KEY};
+    use crate::{RecipientStanza, PLUGIN_RECIPIENT_PREFIX, PLUGIN_SECRET_PREFIX};
+
+    #[inline]
+    fn stringify(body: Vec<u8>) -> Option<String> {
+        String::from_utf8(body).ok()
+    }
 
     fn parse_bech32(s: &str) -> Option<(String, Vec<u8>)> {
         bech32::decode(&s)
             .ok()
             .and_then(|(hrp, data)| Vec::from_base32(&data).ok().map(|d| (hrp, d)))
+    }
+
+    fn parse_identity(identity: &str) -> Option<(String, Vec<u8>)> {
+        let (hrp, data) = parse_bech32(identity)?;
+
+        if hrp.starts_with(PLUGIN_SECRET_PREFIX) && hrp.ends_with('-') {
+            let fragment = hrp.split_at(PLUGIN_SECRET_PREFIX.len()).1;
+            Some((fragment.split_at(fragment.len() - 1).0.to_owned(), data))
+        } else {
+            None
+        }
     }
 
     fn parse_recipient(recipient: &str) -> Option<(String, Vec<u8>)> {
@@ -73,6 +102,22 @@ mod read {
         terminated(
             map_opt(age_stanza, |command| {
                 match (command.tag, &command.args[..]) {
+                    (CMD_ADD_IDENTITY, []) => stringify(command.body)
+                        .and_then(|s| parse_identity(&s))
+                        .map(|(plugin_name, identity)| Command::AddIdentity {
+                            plugin_name,
+                            identity,
+                        }),
+                    (CMD_SECRET, []) => stringify(command.body)
+                        .map(SecretString::new)
+                        .map(Command::Secret),
+                    (CMD_UNWRAP_FILE_KEY, a) if !a.is_empty() => {
+                        Some(Command::UnwrapFileKey(RecipientStanza {
+                            tag: command.args[0].to_owned(),
+                            args: command.args.into_iter().skip(1).map(String::from).collect(),
+                            body: command.body,
+                        }))
+                    }
                     (CMD_WRAP_FILE_KEY, [recipient]) => {
                         parse_recipient(recipient).map(|(plugin_name, recipient)| {
                             Command::WrapFileKey {
@@ -124,5 +169,13 @@ pub(crate) mod write {
             let writer = response("error", args, description.as_bytes());
             writer(w)
         }
+    }
+
+    pub(crate) fn prompt<'a, W: 'a + Write>(message: &'a str) -> impl SerializeFn<W> + 'a {
+        response("prompt", &[], message.as_bytes())
+    }
+
+    pub(crate) fn request_secret<'a, W: 'a + Write>(message: &'a str) -> impl SerializeFn<W> + 'a {
+        response("request-secret", &[], message.as_bytes())
     }
 }
