@@ -283,3 +283,32 @@ pub fn run_plugin<P: AgePlugin>(mut plugin: P) -> io::Result<()> {
         }
     }
 }
+
+/// Prints the newly-created identity and corresponding recipient to standard out.
+///
+/// A "created" time is included in the output, set to the current local time.
+pub fn print_new_identity(plugin_name: &str, identity: &[u8], recipient: &[u8]) -> io::Result<()> {
+    use bech32::ToBase32;
+
+    println!(
+        "# created: {}",
+        chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+    );
+    println!(
+        "# public key: {}",
+        bech32::encode(
+            &format!("{}{}", PLUGIN_RECIPIENT_PREFIX, plugin_name),
+            recipient.to_base32(),
+        )
+        .expect("HRP is valid")
+    );
+    println!(
+        "{}",
+        bech32::encode(
+            &format!("{}{}-", PLUGIN_SECRET_PREFIX, plugin_name),
+            identity.to_base32(),
+        )
+        .expect("HRP is valid")
+    );
+    Ok(())
+}
